@@ -215,6 +215,9 @@ export async function createTicket(input: CreateTicketInput): Promise<Ticket> {
       createdAt: now(),
       updatedAt: now(),
       resolvedAt: null,
+      rating: null,
+      ratingComment: null,
+      ratedAt: null,
       events: [
         {
           id: uid(),
@@ -325,7 +328,11 @@ export async function setPriority(ticketId: string, priority: Priority): Promise
   });
 }
 
-export async function changeStatus(ticketId: string, to: TicketStatus): Promise<Ticket> {
+export async function changeStatus(
+  ticketId: string,
+  to: TicketStatus,
+  reason?: string
+): Promise<Ticket> {
   const s = requireSession();
   await wait();
   return mutate((db) => {
@@ -337,10 +344,43 @@ export async function changeStatus(ticketId: string, to: TicketStatus): Promise<
     if (!allowed.includes(to))
       fail(`This ticket cannot move from ${t.status} to ${to} with your role.`);
     const actor = staff ? getSessionUser()!.name : t.submitterLabel;
-    pushEvent(t, { type: "STATUS", actor, from: t.status, to });
+    pushEvent(t, { type: "STATUS", actor, from: t.status, to, ...(reason ? { text: reason } : {}) });
     t.status = to;
     if (to === "RESOLVED") t.resolvedAt = now();
     if (to === "IN_PROGRESS") t.resolvedAt = null;
+    return t;
+  });
+}
+
+/**
+ * Submitter satisfaction rating. Only the ticket raiser may rate, and only
+ * once the work is done (RESOLVED or CLOSED). Re-rating is allowed and appends
+ * a fresh audit event — the record never loses history.
+ */
+export async function rateTicket(
+  ticketId: string,
+  rating: number,
+  comment: string
+): Promise<Ticket> {
+  const s = requireSession();
+  await wait();
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5)
+    fail("Rating must be between 1 and 5 stars.");
+  return mutate((db) => {
+    const t = db.tickets.find((x) => x.id === ticketId);
+    if (!t) fail("Ticket not found.");
+    if (!isSubmitter(s, t)) fail("Only the ticket raiser can rate this ticket.");
+    if (t.status !== "RESOLVED" && t.status !== "CLOSED")
+      fail("You can rate the work once it is marked resolved.");
+    t.rating = rating;
+    t.ratingComment = comment.trim() || null;
+    t.ratedAt = now();
+    pushEvent(t, {
+      type: "RATING",
+      actor: t.submitterLabel,
+      from: String(rating),
+      ...(t.ratingComment ? { text: t.ratingComment } : {}),
+    });
     return t;
   });
 }
@@ -607,6 +647,10 @@ export interface ManagementStats {
   byDept: { name: string; total: number; resolved: number; open: number }[];
   weekly: { week: string; submissions: number; resolutions: number }[];
   recent: { id: string; ticketId: string; number: string; title: string; type: string; actor: string; at: string; status: TicketStatus }[];
+  avgRating: number | null;
+  ratedCount: number;
+  unratedDone: number; // resolved/closed tickets still awaiting a verdict
+  ratingDist: { stars: number; count: number }[]; // 5 → 1
 }
 
 export async function getStats(): Promise<ManagementStats> {
@@ -679,6 +723,13 @@ export async function getStats(): Promise<ManagementStats> {
     .sort((a, b) => b.at.localeCompare(a.at))
     .slice(0, 9);
 
+  const rated = tickets.filter((t) => t.rating !== null);
+  const done = tickets.filter((t) => t.status === "RESOLVED" || t.status === "CLOSED");
+  const ratingDist = [5, 4, 3, 2, 1].map((stars) => ({
+    stars,
+    count: rated.filter((t) => t.rating === stars).length,
+  }));
+
   return {
     total: tickets.length,
     open: tickets.filter((t) => t.status === "OPEN").length,
@@ -691,6 +742,10 @@ export async function getStats(): Promise<ManagementStats> {
     byDept,
     weekly,
     recent,
+    avgRating: rated.length > 0 ? rated.reduce((a, t) => a + (t.rating ?? 0), 0) / rated.length : null,
+    ratedCount: rated.length,
+    unratedDone: done.filter((t) => t.rating === null).length,
+    ratingDist,
   };
 }
 

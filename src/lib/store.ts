@@ -12,7 +12,7 @@ import type {
 
 // ─── storage keys ─────────────────────────────────────────────────────────────
 
-const DB_KEY = "lw-db-v1";
+const DB_KEY = "lw-db-v2"; // v2: satisfaction ratings schema
 const SESSION_KEY = "lw-session-v1";
 
 export const uid = () => uuidv4();
@@ -47,6 +47,9 @@ interface SeedTicket {
   assigneeId?: string | null;
   createdAt: string;
   resolvedAt?: string | null;
+  rating?: number | null;
+  ratingComment?: string | null;
+  ratedAt?: string | null;
   events: TicketEvent[];
   proofs?: Attachment[];
   attachment?: Attachment | null;
@@ -71,6 +74,9 @@ function T(t: SeedTicket, n: number): Ticket {
       ? t.events[t.events.length - 1].at
       : t.createdAt,
     resolvedAt: t.resolvedAt ?? null,
+    rating: t.rating ?? null,
+    ratingComment: t.ratingComment ?? null,
+    ratedAt: t.ratedAt ?? null,
     events: t.events,
     attachment: t.attachment ?? null,
     proofs: t.proofs ?? [],
@@ -153,6 +159,7 @@ function seedDB(): DB {
         categoryId: "c-sw", departmentId: "d-it", status: "RESOLVED", priority: "MEDIUM",
         submitterId: "u-zoe", submitterLabel: "Zoe Adams", assigneeId: "u-mei",
         createdAt: ago(6, 4), resolvedAt: ago(4, 2),
+        rating: 5, ratingComment: "Fast turnaround — access restored within a day.", ratedAt: ago(4, 1),
         events: [
           ev({ type: "CREATED", actor: "Zoe Adams", at: ago(6, 4) }),
           ev({ type: "ASSIGNED", actor: "Priya Nair", at: ago(6, 2), text: "Mei Lin" }),
@@ -160,6 +167,7 @@ function seedDB(): DB {
           ev({ type: "REMARK_PUBLIC", actor: "Mei Lin", at: ago(4, 3), text: "Your group membership was out of sync with HRIS. Re-synced and granted BI-Reader. Please re-login." }),
           ev({ type: "STATUS", actor: "Mei Lin", at: ago(4, 2), from: "IN_PROGRESS", to: "RESOLVED" }),
           ev({ type: "PROOF", actor: "Mei Lin", at: ago(4, 2), text: "Access audit export", attachment: { id: uid(), name: "access-audit-zoe.svg", type: "image/svg+xml", size: 4820, dataUrl: svgProof("VERIFIED", "#059669") } }),
+          ev({ type: "RATING", actor: "Zoe Adams", at: ago(4, 1), from: "5", text: "Fast turnaround — access restored within a day." }),
         ],
         proofs: [{ id: uid(), name: "access-audit-zoe.svg", type: "image/svg+xml", size: 4820, dataUrl: svgProof("VERIFIED", "#059669") }],
       },
@@ -189,6 +197,7 @@ function seedDB(): DB {
         categoryId: "c-pay", departmentId: "d-hr", status: "RESOLVED", priority: "HIGH",
         submitterId: "u-noah", submitterLabel: "Noah Kim", assigneeId: "u-sofia",
         createdAt: ago(13, 5), resolvedAt: ago(11, 1),
+        rating: 4, ratingComment: "Payout confirmed in the April run. A quicker heads-up would make it a five.", ratedAt: ago(10, 6),
         attachment: { id: uid(), name: "timesheet-approval.svg", type: "image/svg+xml", size: 5120, dataUrl: svgProof("APPROVED", "#2563eb") },
         events: [
           ev({ type: "CREATED", actor: "Noah Kim", at: ago(13, 5) }),
@@ -197,6 +206,7 @@ function seedDB(): DB {
           ev({ type: "REMARK_INTERNAL", actor: "Sofia Rossi", at: ago(12, 2), text: "Payroll batch was locked before the approval synced. Correction scheduled in next run." }),
           ev({ type: "REMARK_PUBLIC", actor: "Sofia Rossi", at: ago(11, 2), text: "Confirmed — the 11.5h will be paid out with the April run, visible from the 28th." }),
           ev({ type: "STATUS", actor: "Sofia Rossi", at: ago(11, 1), from: "IN_PROGRESS", to: "RESOLVED" }),
+          ev({ type: "RATING", actor: "Noah Kim", at: ago(10, 6), from: "4", text: "Payout confirmed in the April run. A quicker heads-up would make it a five." }),
         ],
       },
       5
@@ -269,11 +279,13 @@ function seedDB(): DB {
         categoryId: "c-maint", departmentId: "d-fac", status: "CLOSED", priority: "LOW",
         submitterId: "u-noah", submitterLabel: "Noah Kim", assigneeId: "u-ruth",
         createdAt: ago(34, 2), resolvedAt: ago(30, 4),
+        rating: 5, ratingComment: "Silent now — thank you!", ratedAt: ago(29, 9),
         events: [
           ev({ type: "CREATED", actor: "Noah Kim", at: ago(34, 2) }),
           ev({ type: "STATUS", actor: "Ruth Diaz", at: ago(33, 5), from: "OPEN", to: "IN_PROGRESS" }),
           ev({ type: "REMARK_PUBLIC", actor: "Ruth Diaz", at: ago(30, 5), text: "Fan bearing replaced and hood re-balanced. Should be silent now." }),
           ev({ type: "STATUS", actor: "Ruth Diaz", at: ago(30, 4), from: "IN_PROGRESS", to: "RESOLVED" }),
+          ev({ type: "RATING", actor: "Noah Kim", at: ago(29, 9), from: "5", text: "Silent now — thank you!" }),
           ev({ type: "STATUS", actor: "Noah Kim", at: ago(29, 8), from: "RESOLVED", to: "CLOSED" }),
         ],
       },
@@ -305,11 +317,13 @@ function seedDB(): DB {
         categoryId: "c-leave", departmentId: "d-hr", status: "CLOSED", priority: "MEDIUM",
         submitterId: "u-mei", submitterLabel: "Mei Lin", assigneeId: "u-sofia",
         createdAt: ago(41, 5), resolvedAt: ago(38, 2),
+        rating: 3, ratingComment: "Answered the question, but the page had been outdated for weeks before anyone flagged it.", ratedAt: ago(37, 7),
         events: [
           ev({ type: "CREATED", actor: "Mei Lin", at: ago(41, 5) }),
           ev({ type: "STATUS", actor: "Sofia Rossi", at: ago(40, 3), from: "OPEN", to: "IN_PROGRESS" }),
           ev({ type: "REMARK_PUBLIC", actor: "Sofia Rossi", at: ago(38, 3), text: "16 weeks is correct. Intranet page corrected and archived versions removed." }),
           ev({ type: "STATUS", actor: "Sofia Rossi", at: ago(38, 2), from: "IN_PROGRESS", to: "RESOLVED" }),
+          ev({ type: "RATING", actor: "Mei Lin", at: ago(37, 7), from: "3", text: "Answered the question, but the page had been outdated for weeks before anyone flagged it." }),
           ev({ type: "STATUS", actor: "Mei Lin", at: ago(37, 6), from: "RESOLVED", to: "CLOSED" }),
         ],
       },
@@ -339,12 +353,14 @@ function seedDB(): DB {
         categoryId: "c-sw", departmentId: "d-it", status: "CLOSED", priority: "HIGH",
         submitterId: "u-noah", submitterLabel: "Noah Kim", assigneeId: "u-mei",
         createdAt: ago(48, 4), resolvedAt: ago(45, 1),
+        rating: 5, ratingComment: "Verified on my machine — works again.", ratedAt: ago(44, 8),
         events: [
           ev({ type: "CREATED", actor: "Noah Kim", at: ago(48, 4) }),
           ev({ type: "ASSIGNED", actor: "Priya Nair", at: ago(48, 2), text: "Mei Lin" }),
           ev({ type: "STATUS", actor: "Mei Lin", at: ago(47, 5), from: "OPEN", to: "IN_PROGRESS" }),
           ev({ type: "REMARK_PUBLIC", actor: "Mei Lin", at: ago(45, 2), text: "Root cause was a SameSite cookie attribute. Fixed at the IdP proxy; verified on Safari 17.2." }),
           ev({ type: "STATUS", actor: "Mei Lin", at: ago(45, 1), from: "IN_PROGRESS", to: "RESOLVED" }),
+          ev({ type: "RATING", actor: "Noah Kim", at: ago(44, 8), from: "5", text: "Verified on my machine — works again." }),
           ev({ type: "STATUS", actor: "Noah Kim", at: ago(44, 7), from: "RESOLVED", to: "CLOSED" }),
         ],
       },
@@ -374,12 +390,14 @@ function seedDB(): DB {
         categoryId: "c-net", departmentId: "d-it", status: "CLOSED", priority: "MEDIUM",
         anonymous: true, submitterId: null, submitterLabel: "anon_58ab2", assigneeId: "u-jonas",
         createdAt: ago(27, 3), resolvedAt: ago(24, 6),
+        rating: 4, ratingComment: "Advance cards solve it. Would still love an auto-expiry on old passwords.", ratedAt: ago(23, 10),
         events: [
           ev({ type: "CREATED", actor: "anon_58ab2", at: ago(27, 3) }),
           ev({ type: "ASSIGNED", actor: "Priya Nair", at: ago(27, 1), text: "Jonas Weber" }),
           ev({ type: "STATUS", actor: "Jonas Weber", at: ago(26, 4), from: "OPEN", to: "IN_PROGRESS" }),
           ev({ type: "REMARK_PUBLIC", actor: "Jonas Weber", at: ago(24, 7), text: "Rotation is now scheduled monthly and reception gets the new card PDF 48h in advance." }),
           ev({ type: "STATUS", actor: "Jonas Weber", at: ago(24, 6), from: "IN_PROGRESS", to: "RESOLVED" }),
+          ev({ type: "RATING", actor: "anon_58ab2", at: ago(23, 10), from: "4", text: "Advance cards solve it. Would still love an auto-expiry on old passwords." }),
           ev({ type: "STATUS", actor: "anon_58ab2", at: ago(23, 9), from: "RESOLVED", to: "CLOSED" }),
         ],
       },

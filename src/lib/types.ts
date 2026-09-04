@@ -19,7 +19,8 @@ export type TicketEventType =
   | "STATUS"
   | "REMARK_PUBLIC"
   | "REMARK_INTERNAL"
-  | "PROOF";
+  | "PROOF"
+  | "RATING";
 
 export interface Attachment {
   id: string;
@@ -96,6 +97,10 @@ export interface Ticket {
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
+  // satisfaction rating — set by the submitter once the work is done
+  rating: number | null; // 1–5
+  ratingComment: string | null;
+  ratedAt: string | null;
   events: TicketEvent[];
   attachment: Attachment | null;
   proofs: Attachment[];
@@ -257,3 +262,16 @@ export const TRANSITION_LABEL: Record<TicketStatus, string> = {
   RESOLVED: "Mark Resolved",
   CLOSED: "Close Ticket",
 };
+
+// ─── satisfaction & verdict metadata ─────────────────────────────────────────
+
+export const RATING_LABELS = ["Poor", "Fair", "Good", "Very good", "Excellent"] as const;
+
+/** Verdicts a submitter can attach when reopening a resolved ticket. */
+export const REOPEN_REASONS = [
+  { value: "not_resolved", label: "Still not resolved" },
+  { value: "doubt", label: "I have a doubt about the fix" },
+  { value: "wrong_fix", label: "Resolution doesn't match my request" },
+] as const;
+
+export type ReopenReason = (typeof REOPEN_REASONS)[number]["value"];

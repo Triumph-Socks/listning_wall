@@ -7,6 +7,7 @@ import {
   Layers,
   Lock,
   Search,
+  Star,
   UserRound,
 } from "lucide-react";
 import * as api from "../lib/api";
@@ -225,7 +226,20 @@ export function DepartmentPage() {
                         </span>
                       </td>
                       <td className="px-3 py-3"><PriorityBadge priority={t.priority} /></td>
-                      <td className="px-3 py-3"><StatusBadge status={t.status} /></td>
+                      <td className="px-3 py-3">
+                        <span className="flex items-center gap-1.5">
+                          <StatusBadge status={t.status} />
+                          {t.rating !== null && (
+                            <span
+                              className="inline-flex items-center gap-0.5 rounded border border-amber-200 bg-amber-50 px-1 py-px text-[10.5px] font-bold text-amber-600 tnum dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                              title={`Rated ${t.rating}/5 by the submitter`}
+                            >
+                              <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" aria-hidden />
+                              {t.rating}
+                            </span>
+                          )}
+                        </span>
+                      </td>
                       <td className="px-3 py-3 text-[12.5px]">
                         {assignee ? (
                           <span className="font-medium text-gray-700 dark:text-zinc-300">{assignee.name}</span>

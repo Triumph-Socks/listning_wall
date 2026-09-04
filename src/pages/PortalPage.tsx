@@ -14,6 +14,7 @@ import {
   Paperclip,
   PenLine,
   Send,
+  Star,
   X,
 } from "lucide-react";
 import * as api from "../lib/api";
@@ -325,6 +326,23 @@ export function PortalPage() {
                       </span>
                       <PriorityBadge priority={t.priority} />
                       <StatusBadge status={t.status} />
+                      {t.rating !== null ? (
+                        <span
+                          className="inline-flex items-center gap-0.5 rounded border border-amber-200 bg-amber-50 px-1 py-px text-[10.5px] font-bold text-amber-600 tnum dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                          title={`You rated this ${t.rating}/5`}
+                        >
+                          <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" aria-hidden />
+                          {t.rating}/5
+                        </span>
+                      ) : t.status === "RESOLVED" ? (
+                        <span
+                          className="hidden items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-px text-[10.5px] font-bold text-amber-600 sm:inline-flex dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                          title="Resolved — open the ticket to leave your verdict"
+                        >
+                          <Star className="pulse-dot h-2.5 w-2.5" aria-hidden />
+                          Rate the fix
+                        </span>
+                      ) : null}
                       <ChevronRight className="h-4 w-4 shrink-0 text-gray-300 transition-transform group-hover:translate-x-0.5 group-hover:text-gray-500 dark:text-zinc-700" aria-hidden />
                     </button>
                   </li>

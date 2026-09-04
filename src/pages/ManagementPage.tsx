@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Activity, ArrowRight, Clock3, Inbox, Lock, RefreshCw, UserRound } from "lucide-react";
+import { Activity, ArrowRight, Clock3, Inbox, RefreshCw, Star, UserRound } from "lucide-react";
 import * as api from "../lib/api";
 import type { ManagementStats } from "../lib/api";
 import { fmtDuration, timeAgo } from "../lib/format";
@@ -29,6 +29,7 @@ const EVENT_LABEL: Record<string, string> = {
   REMARK_PUBLIC: "remarked",
   REMARK_INTERNAL: "noted internally",
   PROOF: "attached proof",
+  RATING: "rated",
 };
 
 export function ManagementPage() {
@@ -85,7 +86,7 @@ export function ManagementPage() {
     { label: "Total tickets", value: String(stats.total), sub: `${stats.closed} closed · ${stats.resolved} resolved`, icon: <Inbox className="h-4 w-4" aria-hidden />, accent: "text-gray-900 dark:text-zinc-50" },
     { label: "Active workload", value: String(active), sub: `${stats.open} open · ${stats.inProgress} in progress`, icon: <Activity className="h-4 w-4" aria-hidden />, accent: "text-amber-600 dark:text-amber-400" },
     { label: "Avg resolution time", value: fmtDuration(stats.avgResolutionMs), sub: "created → resolved, all time", icon: <Clock3 className="h-4 w-4" aria-hidden />, accent: "text-blue-600 dark:text-blue-400" },
-    { label: "Anonymous share", value: `${anonPct}%`, sub: `${stats.anonymous} anonymous · ${stats.identified} identified`, icon: <Lock className="h-4 w-4" aria-hidden />, accent: "text-emerald-600 dark:text-emerald-400" },
+    { label: "Satisfaction", value: stats.avgRating !== null ? stats.avgRating.toFixed(1) : "—", sub: `${stats.ratedCount} rated · ${stats.unratedDone} awaiting verdict`, icon: <Star className="h-4 w-4" aria-hidden />, accent: "text-amber-500 dark:text-amber-400" },
   ];
 
   return (
@@ -153,8 +154,9 @@ export function ManagementPage() {
         </Card>
       </div>
 
-      {/* anonymity ratio + activity */}
-      <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
+      {/* anonymity ratio, satisfaction distribution + activity */}
+      <div className="grid items-start gap-4 lg:grid-cols-[380px_1fr]">
+        <div className="space-y-4">
         <Card className="bg-white dark:bg-zinc-900">
           <PanelTitle>Anonymity ratio</PanelTitle>
           <div className="p-4">
@@ -182,6 +184,60 @@ export function ManagementPage() {
             </p>
           </div>
         </Card>
+
+        <Card className="bg-white dark:bg-zinc-900">
+          <PanelTitle
+            right={
+              stats.avgRating !== null ? (
+                <span className="flex items-center gap-1 text-[12px] font-bold text-amber-500 tnum dark:text-amber-400">
+                  <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-hidden />
+                  {stats.avgRating.toFixed(1)}/5
+                </span>
+              ) : undefined
+            }
+          >
+            Satisfaction distribution
+          </PanelTitle>
+          <div className="p-4">
+            {stats.ratedCount === 0 ? (
+              <p className="py-4 text-center text-[12.5px] text-gray-400 dark:text-zinc-600">
+                No ratings yet — verdicts appear once submitters rate resolved work.
+              </p>
+            ) : (
+              <ul className="space-y-2.5" aria-label="Rating distribution">
+                {stats.ratingDist.map((r) => {
+                  const max = Math.max(...stats.ratingDist.map((x) => x.count), 1);
+                  const pct = Math.round((r.count / stats.ratedCount) * 100);
+                  return (
+                    <li key={r.stars} className="flex items-center gap-2.5">
+                      <span className="flex w-8 shrink-0 items-center gap-0.5 text-[12px] font-semibold text-gray-600 tnum dark:text-zinc-400">
+                        {r.stars}
+                        <Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden />
+                      </span>
+                      <span className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-zinc-800">
+                        <span
+                          className={cn(
+                            "block h-full rounded-full transition-all duration-700",
+                            r.stars >= 4 ? "bg-emerald-500" : r.stars === 3 ? "bg-amber-500" : "bg-rose-500"
+                          )}
+                          style={{ width: `${(r.count / max) * 100}%` }}
+                        />
+                      </span>
+                      <span className="w-14 shrink-0 text-right text-[11.5px] text-gray-500 tnum dark:text-zinc-500">
+                        {r.count} · {pct}%
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <p className="mt-4 flex items-start gap-2 border-t border-gray-200 pt-3 text-[11.5px] leading-relaxed text-gray-500 dark:border-zinc-800 dark:text-zinc-500">
+              <Star className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              Ratings are submitted by ticket raisers after resolution. {stats.unratedDone} completed ticket{stats.unratedDone === 1 ? "" : "s"} still await a verdict.
+            </p>
+          </div>
+        </Card>
+        </div>
 
         <Card className="bg-white dark:bg-zinc-900">
           <PanelTitle

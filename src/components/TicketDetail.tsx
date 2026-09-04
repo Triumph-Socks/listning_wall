@@ -12,18 +12,20 @@ import {
   MessageSquare,
   Paperclip,
   PlusCircle,
+  RotateCcw,
   Send,
   ShieldAlert,
+  Star,
   UserPlus,
   Eye,
 } from "lucide-react";
 import * as api from "../lib/api";
 import { getDB } from "../lib/store";
 import { useSession } from "../lib/session";
-import type { Attachment, Priority, Ticket, TicketEvent, TicketStatus, User } from "../lib/types";
-import { PRIORITY_META, PRIORITY_ORDER, STATUS_META, STAFF_TRANSITIONS, SUBMITTER_TRANSITIONS, TRANSITION_LABEL } from "../lib/types";
+import type { Attachment, Priority, ReopenReason, Ticket, TicketEvent, TicketStatus, User } from "../lib/types";
+import { PRIORITY_META, PRIORITY_ORDER, RATING_LABELS, REOPEN_REASONS, STATUS_META, STAFF_TRANSITIONS, SUBMITTER_TRANSITIONS, TRANSITION_LABEL } from "../lib/types";
 import { fmtBytes, fmtDateTime, timeAgo } from "../lib/format";
-import { Badge, Button, Card, Label, PanelTitle, PriorityBadge, Select, Skeleton, StatusBadge, Textarea } from "./ui";
+import { Badge, Button, Card, Label, PanelTitle, PriorityBadge, Select, Skeleton, Stars, StatusBadge, Textarea } from "./ui";
 import { cn } from "../lib/cn";
 
 const EVENT_ICON: Record<TicketEvent["type"], ReactNode> = {
@@ -34,7 +36,49 @@ const EVENT_ICON: Record<TicketEvent["type"], ReactNode> = {
   REMARK_PUBLIC: <MessageSquare className="h-3.5 w-3.5" aria-hidden />,
   REMARK_INTERNAL: <Lock className="h-3.5 w-3.5" aria-hidden />,
   PROOF: <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />,
+  RATING: <Star className="h-3.5 w-3.5" aria-hidden />,
 };
+
+function StarPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [hover, setHover] = useState(0);
+  const active = hover || value;
+  return (
+    <div
+      className="flex items-center gap-0.5"
+      onMouseLeave={() => setHover(0)}
+      role="radiogroup"
+      aria-label="Satisfaction rating, 1 to 5 stars"
+    >
+      {[1, 2, 3, 4, 5].map((i) => (
+        <button
+          key={i}
+          type="button"
+          role="radio"
+          aria-checked={value === i}
+          aria-label={`${i} star${i > 1 ? "s" : ""} — ${RATING_LABELS[i - 1]}`}
+          onMouseEnter={() => setHover(i)}
+          onFocus={() => setHover(i)}
+          onBlur={() => setHover(0)}
+          onClick={() => onChange(i)}
+          className="rounded p-0.5 transition-transform duration-150 hover:-translate-y-0.5"
+        >
+          <Star
+            className={cn(
+              "h-6 w-6 transition-colors duration-150",
+              i <= active
+                ? "fill-amber-400 text-amber-400"
+                : "fill-transparent text-gray-300 dark:text-zinc-700"
+            )}
+            aria-hidden
+          />
+        </button>
+      ))}
+      <span className="ml-2 w-20 text-[12px] font-semibold text-gray-600 dark:text-zinc-300">
+        {active ? RATING_LABELS[active - 1] : "Select…"}
+      </span>
+    </div>
+  );
+}
 
 export function AttachmentChip({ att, preview = false }: { att: Attachment; preview?: boolean }) {
   const isImage = att.type.startsWith("image/");
@@ -92,6 +136,11 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
   const [remarkInternal, setRemarkInternal] = useState(false);
   const [remarkErr, setRemarkErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // satisfaction verdict state
+  const [rateOpen, setRateOpen] = useState(false);
+  const [rateValue, setRateValue] = useState(0);
+  const [rateComment, setRateComment] = useState("");
+  const [reopenReason, setReopenReason] = useState<ReopenReason>("not_resolved");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -202,6 +251,34 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  const openRatingEditor = () => {
+    setRateValue(ticket.rating ?? 0);
+    setRateComment(ticket.ratingComment ?? "");
+    setRateOpen(true);
+  };
+
+  const onRate = async () => {
+    if (!rateValue) return;
+    const t = await run("rate", () => api.rateTicket(ticket.id, rateValue, rateComment));
+    if (t) {
+      setRateOpen(false);
+      toast.success(
+        `Thanks for the feedback — rated ${rateValue}/5 · ${RATING_LABELS[rateValue - 1]}`
+      );
+    }
+  };
+
+  const onConfirmResolved = async () => {
+    const t = await run("status-CLOSED", () => api.changeStatus(ticket.id, "CLOSED"));
+    if (t) toast.success(`${ticket.number} confirmed resolved and closed`);
+  };
+
+  const onReopen = async () => {
+    const reason = REOPEN_REASONS.find((r) => r.value === reopenReason)?.label;
+    const t = await run("reopen", () => api.changeStatus(ticket.id, "IN_PROGRESS", reason));
+    if (t) toast.info(`${ticket.number} reopened — ${reason}`);
+  };
+
   return (
     <div className="space-y-4 rise">
       <button
@@ -224,6 +301,12 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
               <Lock className="h-3 w-3" aria-hidden /> Anonymous
             </Badge>
           )}
+          {ticket.rating !== null && (
+            <Badge className="bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30">
+              <Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden />
+              <span className="tnum">{ticket.rating}/5</span>
+            </Badge>
+          )}
         </div>
         <h2 className="mt-2 text-xl font-bold tracking-tight text-gray-900 sm:text-2xl dark:text-zinc-50">
           {ticket.title}
@@ -240,7 +323,20 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
           </MetaCell>
           <MetaCell label="Assignee">{assignee?.name ?? <span className="text-gray-400 dark:text-zinc-600">Unassigned</span>}</MetaCell>
           <MetaCell label="Created"><span className="tnum">{fmtDateTime(ticket.createdAt)}</span></MetaCell>
-          <MetaCell label="Last activity"><span className="tnum">{timeAgo(ticket.updatedAt)}</span></MetaCell>
+          <MetaCell label="Satisfaction">
+            {ticket.rating !== null ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Stars value={ticket.rating} size={12} />
+                <span className="tnum text-amber-600 dark:text-amber-400">{ticket.rating}/5</span>
+              </span>
+            ) : ticket.status === "RESOLVED" ? (
+              <span className="text-amber-600 dark:text-amber-400">Awaiting verdict</span>
+            ) : ticket.status === "CLOSED" ? (
+              <span className="text-gray-400 dark:text-zinc-600">Not rated</span>
+            ) : (
+              <span className="text-gray-400 dark:text-zinc-600">—</span>
+            )}
+          </MetaCell>
         </div>
       </Card>
 
@@ -284,9 +380,13 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
                       "z-10 mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border",
                       e.type === "REMARK_INTERNAL"
                         ? "border-amber-200 bg-amber-50 text-amber-600 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-                        : e.type === "STATUS" && e.to === "RESOLVED"
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-                          : "border-gray-200 bg-white text-gray-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                        : e.type === "RATING"
+                          ? "border-amber-200 bg-amber-50 text-amber-500 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400"
+                          : e.type === "STATUS" && e.to === "RESOLVED"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+                            : e.type === "STATUS" && e.to === "IN_PROGRESS" && e.from === "RESOLVED"
+                              ? "border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-400"
+                              : "border-gray-200 bg-white text-gray-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
                     )}
                   >
                     {EVENT_ICON[e.type]}
@@ -310,14 +410,24 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
                         <span className="text-amber-700 dark:text-amber-300">added an internal note (hidden from submitter)</span>
                       )}
                       {e.type === "PROOF" && (<>attached proof of resolution</>)}
+                      {e.type === "RATING" && (
+                        <>
+                          rated the resolution{" "}
+                          <Stars value={Number(e.from) || 0} size={12} className="align-[-1px]" />{" "}
+                          <span className="font-semibold tnum text-amber-600 dark:text-amber-400">{e.from}/5</span>
+                        </>
+                      )}
                     </p>
-                    {e.text && (e.type === "REMARK_PUBLIC" || e.type === "REMARK_INTERNAL") && (
+                    {e.text && (e.type === "REMARK_PUBLIC" || e.type === "REMARK_INTERNAL" || e.type === "STATUS" || e.type === "RATING") && (
                       <p className={cn(
                         "mt-1.5 rounded-md border px-3 py-2 text-[13px] leading-relaxed",
                         e.type === "REMARK_INTERNAL"
                           ? "border-amber-200 bg-amber-50/60 text-gray-700 dark:border-amber-500/30 dark:bg-amber-500/5 dark:text-zinc-300"
-                          : "border-gray-200 bg-white text-gray-700 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-300"
+                          : e.type === "STATUS"
+                            ? "border-rose-200 bg-rose-50/60 text-gray-700 dark:border-rose-500/30 dark:bg-rose-500/5 dark:text-zinc-300"
+                            : "border-gray-200 bg-white text-gray-700 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-300"
                       )}>
+                        {e.type === "STATUS" && <span className="mr-1.5 font-semibold text-rose-600 dark:text-rose-400">Reason:</span>}
                         {e.text}
                       </p>
                     )}
@@ -458,6 +568,111 @@ export function TicketDetail({ id, onBack }: { id: string; onBack: () => void })
                     <Button variant="outline" size="sm" loading={busy === "proof"} onClick={() => fileRef.current?.click()}>
                       <Paperclip className="h-3.5 w-3.5" aria-hidden /> Upload proof (≤ 1.5 MB)
                     </Button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
+          {/* submitter verdict & satisfaction rating */}
+          {submitter && (ticket.status === "RESOLVED" || ticket.status === "CLOSED") && (
+            <Card>
+              <PanelTitle
+                right={
+                  ticket.rating !== null ? (
+                    <Stars value={ticket.rating} size={13} />
+                  ) : (
+                    <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">action needed</span>
+                  )
+                }
+              >
+                Your verdict
+              </PanelTitle>
+              <div className="space-y-4 p-4">
+                {rateOpen || ticket.rating === null ? (
+                  <div className="space-y-3 rise">
+                    <p className="text-[12.5px] leading-relaxed text-gray-500 dark:text-zinc-400">
+                      {ticket.rating === null
+                        ? "The team marked this work as done. How was the handling? Your rating feeds the department scorecard."
+                        : "Adjust your rating — the previous one will be replaced and logged."}
+                    </p>
+                    <StarPicker value={rateValue} onChange={setRateValue} />
+                    <Textarea
+                      rows={2}
+                      value={rateComment}
+                      onChange={(e) => setRateComment(e.target.value)}
+                      placeholder="Optional — what worked, what didn't…"
+                      aria-label="Rating feedback"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" disabled={rateValue === 0} loading={busy === "rate"} onClick={() => void onRate()}>
+                        <Star className="h-3.5 w-3.5" aria-hidden />
+                        {ticket.rating !== null ? "Update rating" : "Submit rating"}
+                      </Button>
+                      {ticket.rating !== null && (
+                        <Button variant="ghost" size="sm" onClick={() => setRateOpen(false)}>
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rise">
+                    <div className="rounded-md border border-gray-200 bg-gray-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+                      <div className="flex items-center gap-2">
+                        <Stars value={ticket.rating ?? 0} size={16} />
+                        <span className="text-[13px] font-bold tnum text-gray-900 dark:text-zinc-100">{ticket.rating}/5</span>
+                        <span className="text-[12px] text-gray-500 dark:text-zinc-500">
+                          · {RATING_LABELS[(ticket.rating ?? 1) - 1]}
+                        </span>
+                      </div>
+                      {ticket.ratingComment && (
+                        <p className="mt-2 text-[12.5px] leading-relaxed text-gray-600 dark:text-zinc-400">
+                          “{ticket.ratingComment}”
+                        </p>
+                      )}
+                      {ticket.ratedAt && (
+                        <p className="mt-2 text-[11px] text-gray-400 tnum dark:text-zinc-600">Rated {timeAgo(ticket.ratedAt)}</p>
+                      )}
+                    </div>
+                    <Button variant="ghost" size="sm" className="mt-2.5" onClick={openRatingEditor}>
+                      <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Update rating
+                    </Button>
+                  </div>
+                )}
+
+                {ticket.status === "RESOLVED" && (
+                  <div className="space-y-3.5 border-t border-gray-200 pt-3.5 dark:border-zinc-800">
+                    <div>
+                      <p className="text-[13px] font-medium text-gray-700 dark:text-zinc-300">Did this fix the issue?</p>
+                      <Button
+                        variant="success"
+                        size="sm"
+                        className="mt-2"
+                        loading={busy === "status-CLOSED"}
+                        onClick={() => void onConfirmResolved()}
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Yes — confirm & close
+                      </Button>
+                    </div>
+                    <div>
+                      <Label htmlFor="reopen-reason">No — reopen it with a reason</Label>
+                      <div className="mt-1.5 flex gap-2">
+                        <Select
+                          id="reopen-reason"
+                          value={reopenReason}
+                          onChange={(e) => setReopenReason(e.target.value as ReopenReason)}
+                          className="flex-1"
+                        >
+                          {REOPEN_REASONS.map((r) => (
+                            <option key={r.value} value={r.value}>{r.label}</option>
+                          ))}
+                        </Select>
+                        <Button variant="outline" size="sm" loading={busy === "reopen"} onClick={() => void onReopen()}>
+                          <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Reopen
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

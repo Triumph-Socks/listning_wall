@@ -1,6 +1,6 @@
 import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Loader2, X } from "lucide-react";
+import { ChevronDown, Loader2, Star, X } from "lucide-react";
 import { PRIORITY_META, ROLE_META, STATUS_META, type Priority, type Role, type TicketStatus } from "../lib/types";
 import { cn } from "../lib/cn";
 
@@ -143,6 +143,29 @@ export function Badge({ className, children }: { className?: string; children: R
   return (
     <span className={cn("inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold leading-4", className)}>
       {children}
+    </span>
+  );
+}
+
+export function Stars({ value, size = 14, className }: { value: number; size?: number; className?: string }) {
+  return (
+    <span
+      className={cn("inline-flex items-center gap-px", className)}
+      role="img"
+      aria-label={`${value} out of 5 stars`}
+    >
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Star
+          key={i}
+          style={{ width: size, height: size }}
+          className={
+            i <= Math.round(value)
+              ? "fill-amber-400 text-amber-400"
+              : "fill-transparent text-gray-300 dark:text-zinc-700"
+          }
+          aria-hidden
+        />
+      ))}
     </span>
   );
 }
