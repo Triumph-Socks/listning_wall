@@ -651,6 +651,25 @@ export interface ManagementStats {
   ratedCount: number;
   unratedDone: number; // resolved/closed tickets still awaiting a verdict
   ratingDist: { stars: number; count: number }[]; // 5 → 1
+  // ── decision analytics ──────────────────────────────────────────────────────
+  byCategory: { name: string; department: string; total: number; anonymous: number; open: number }[];
+  topRaisers: { label: string; anonymous: boolean; count: number }[];
+  originDepts: { name: string; count: number }[];
+  deptPerf: {
+    id: string;
+    name: string;
+    backlog: number;
+    resolved: number;
+    reopens: number;
+    avgFirstActionMs: number | null;
+    avgResolutionMs: number | null;
+    avgRating: number | null;
+  }[];
+  actionBands: { label: string; count: number }[];
+  resolveBands: { label: string; count: number }[];
+  medianFirstActionMs: number | null;
+  medianResolutionMs: number | null;
+  funnel: { stage: string; count: number }[];
 }
 
 export async function getStats(): Promise<ManagementStats> {
@@ -663,10 +682,6 @@ export async function getStats(): Promise<ManagementStats> {
   const resolvedTimes = tickets
     .filter((t) => t.resolvedAt)
     .map((t) => new Date(t.resolvedAt!).getTime() - new Date(t.createdAt).getTime());
-  const avg =
-    resolvedTimes.length > 0
-      ? resolvedTimes.reduce((a, b) => a + b, 0) / resolvedTimes.length
-      : 0;
 
   const byDept = db.departments.map((d) => {
     const ts = tickets.filter((t) => t.departmentId === d.id);
@@ -730,15 +745,149 @@ export async function getStats(): Promise<ManagementStats> {
     count: rated.filter((t) => t.rating === stars).length,
   }));
 
+  // ── decision analytics ─────────────────────────────────────────────────────
+  const HOUR = 36e5;
+  const DAY = 24 * HOUR;
+
+  /** First staff-side action on a ticket (assign, triage, remark or proof). */
+  const firstActionAt = (t: Ticket): string | null => {
+    let at: string | null = null;
+    for (const e of t.events) {
+      const isAction =
+        e.type === "ASSIGNED" ||
+        e.type === "PRIORITY" ||
+        e.type === "REMARK_PUBLIC" ||
+        e.type === "REMARK_INTERNAL" ||
+        e.type === "PROOF" ||
+        (e.type === "STATUS" && e.to === "IN_PROGRESS");
+      if (isAction && (at === null || e.at < at)) at = e.at;
+    }
+    return at;
+  };
+
+  const byCategory = db.categories
+    .map((c) => {
+      const ts = tickets.filter((t) => t.categoryId === c.id);
+      return {
+        name: c.name,
+        department: deptName(c.departmentId),
+        total: ts.length,
+        anonymous: ts.filter((t) => t.anonymous).length,
+        open: ts.filter((t) => t.status === "OPEN" || t.status === "IN_PROGRESS").length,
+      };
+    })
+    .filter((c) => c.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  const raiserCounts = new Map<string, { label: string; anonymous: boolean; count: number }>();
+  for (const t of tickets) {
+    const key = t.submitterId ?? t.submitterLabel;
+    const cur = raiserCounts.get(key) ?? { label: t.submitterLabel, anonymous: t.anonymous, count: 0 };
+    cur.count += 1;
+    raiserCounts.set(key, cur);
+  }
+  const topRaisers = [...raiserCounts.values()].sort((a, b) => b.count - a.count).slice(0, 8);
+
+  const originCounts = new Map<string, number>();
+  for (const t of tickets) {
+    const u = t.submitterId ? db.users.find((x) => x.id === t.submitterId) : null;
+    const name = u?.departmentId ? deptName(u.departmentId) : "Anonymous / masked";
+    originCounts.set(name, (originCounts.get(name) ?? 0) + 1);
+  }
+  const originDepts = [...originCounts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const mean = (a: number[]): number | null =>
+    a.length > 0 ? a.reduce((x, y) => x + y, 0) / a.length : null;
+
+  const deptPerf = db.departments
+    .map((d) => {
+      const ts = tickets.filter((t) => t.departmentId === d.id);
+      const faMs = ts
+        .map((t) => {
+          const at = firstActionAt(t);
+          return at ? new Date(at).getTime() - new Date(t.createdAt).getTime() : null;
+        })
+        .filter((x): x is number => x !== null);
+      const resMs = ts
+        .filter((t) => t.resolvedAt)
+        .map((t) => new Date(t.resolvedAt!).getTime() - new Date(t.createdAt).getTime());
+      const reopens = ts.reduce(
+        (acc, t) =>
+          acc +
+          t.events.filter(
+            (e) => e.type === "STATUS" && e.to === "IN_PROGRESS" && (e.from === "RESOLVED" || e.from === "CLOSED")
+          ).length,
+        0
+      );
+      const ratedHere = ts.filter((t) => t.rating !== null);
+      return {
+        id: d.id,
+        name: d.name,
+        backlog: ts.filter((t) => t.status === "OPEN" || t.status === "IN_PROGRESS").length,
+        resolved: ts.filter((t) => t.status === "RESOLVED" || t.status === "CLOSED").length,
+        reopens,
+        avgFirstActionMs: mean(faMs),
+        avgResolutionMs: mean(resMs),
+        avgRating: mean(ratedHere.map((t) => t.rating as number)),
+      };
+    })
+    .sort((a, b) => (a.avgResolutionMs ?? Infinity) - (b.avgResolutionMs ?? Infinity));
+
+  const faVals = tickets
+    .map((t) => {
+      const at = firstActionAt(t);
+      return at ? new Date(at).getTime() - new Date(t.createdAt).getTime() : null;
+    })
+    .filter((x): x is number => x !== null);
+
+  const bucket = (vals: number[], cuts: [number, string][]): { label: string; count: number }[] =>
+    cuts.map(([max, label], i) => {
+      const min = i === 0 ? 0 : cuts[i - 1][0];
+      return { label, count: vals.filter((v) => v >= min && v < max).length };
+    });
+
+  const actionBands = bucket(faVals, [
+    [8 * HOUR, "Under 8 hours"],
+    [2 * DAY, "8h – 2 days"],
+    [5 * DAY, "2 – 5 days"],
+    [Infinity, "Over 5 days"],
+  ]);
+  const resolveBands = bucket(resolvedTimes, [
+    [DAY, "Under 1 day"],
+    [3 * DAY, "1 – 3 days"],
+    [7 * DAY, "3 – 7 days"],
+    [Infinity, "Over 7 days"],
+  ]);
+
+  const median = (vals: number[]): number | null => {
+    if (vals.length === 0) return null;
+    const s = [...vals].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  };
+
+  const ever = (t: Ticket, pred: (e: Ticket["events"][number]) => boolean) => t.events.some(pred);
+  const funnel = [
+    { stage: "Submitted", count: tickets.length },
+    {
+      stage: "Assigned",
+      count: tickets.filter((t) => t.assigneeId || ever(t, (e) => e.type === "ASSIGNED" && e.text !== "Unassigned")).length,
+    },
+    {
+      stage: "Work started",
+      count: tickets.filter(
+        (t) =>
+          t.status !== "OPEN" ||
+          ever(t, (e) => e.type === "STATUS" && e.to === "IN_PROGRESS")
+      ).length,
+    },
+    { stage: "Resolved / closed", count: done.length },
+    { stage: "Rated by raiser", count: rated.length },
+  ];
+
   return {
-    total: tickets.length,
-    open: tickets.filter((t) => t.status === "OPEN").length,
-    inProgress: tickets.filter((t) => t.status === "IN_PROGRESS").length,
-    resolved: tickets.filter((t) => t.status === "RESOLVED").length,
-    closed: tickets.filter((t) => t.status === "CLOSED").length,
-    avgResolutionMs: avg,
-    anonymous: tickets.filter((t) => t.anonymous).length,
-    identified: tickets.filter((t) => !t.anonymous).length,
     byDept,
     weekly,
     recent,
@@ -746,6 +895,23 @@ export async function getStats(): Promise<ManagementStats> {
     ratedCount: rated.length,
     unratedDone: done.filter((t) => t.rating === null).length,
     ratingDist,
+    byCategory,
+    topRaisers,
+    originDepts,
+    deptPerf,
+    actionBands,
+    resolveBands,
+    medianFirstActionMs: median(faVals),
+    medianResolutionMs: median(resolvedTimes),
+    funnel,
+    total: tickets.length,
+    open: tickets.filter((t) => t.status === "OPEN").length,
+    inProgress: tickets.filter((t) => t.status === "IN_PROGRESS").length,
+    resolved: tickets.filter((t) => t.status === "RESOLVED").length,
+    closed: tickets.filter((t) => t.status === "CLOSED").length,
+    avgResolutionMs: mean(resolvedTimes) ?? 0,
+    anonymous: tickets.filter((t) => t.anonymous).length,
+    identified: tickets.filter((t) => !t.anonymous).length,
   };
 }
 
